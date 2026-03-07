@@ -1,0 +1,417 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  PLANNER
+  OPERATIONS_MANAGER
+  DRIVER
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  INVITED
+}
+
+enum PlanType {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+}
+
+enum OrderStatus {
+  DRAFT
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ShipmentStatus {
+  PENDING
+  PLANNED
+  DISPATCHED
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+  CANCELLED
+}
+
+enum RouteStatus {
+  DRAFT
+  PLANNED
+  DISPATCHED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum StopStatus {
+  PENDING
+  ARRIVED
+  DELIVERED
+  FAILED
+  SKIPPED
+}
+
+enum DriverStatus {
+  AVAILABLE
+  ON_ROUTE
+  OFFLINE
+}
+
+enum VehicleStatus {
+  AVAILABLE
+  IN_USE
+  MAINTENANCE
+  RETIRED
+}
+
+enum ExceptionType {
+  LATE_DELIVERY
+  MISSED_TIME_WINDOW
+  VEHICLE_BREAKDOWN
+  DRIVER_INCIDENT
+  CUSTOMER_UNAVAILABLE
+  DAMAGED_GOODS
+  OTHER
+}
+
+enum ExceptionStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum DocumentType {
+  CMR
+  INVOICE
+  CUSTOMS
+  POD
+  OTHER
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+// ─── Core Entities ───────────────────────────────────────────────────────────
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  planType  PlanType @default(FREE)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users        User[]
+  customers    Customer[]
+  orders       Order[]
+  routes       Route[]
+  drivers      Driver[]
+  vehicles     Vehicle[]
+  appointments Appointment[]
+  locations    Location[]
+
+  @@map("tenants")
+}
+
+model User {
+  id        String     @id @default(cuid())
+  tenantId  String
+  name      String
+  email     String
+  role      UserRole   @default(PLANNER)
+  status    UserStatus @default(ACTIVE)
+  password  String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sessions  Session[]
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  contactEmail String?
+  contactPhone String?
+  address      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  orders  Order[]
+
+  @@map("customers")
+}
+
+model Order {
+  id         String      @id @default(cuid())
+  tenantId   String
+  customerId String
+  reference  String
+  status     OrderStatus @default(DRAFT)
+  notes      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer  Customer   @relation(fields: [customerId], references: [id])
+  shipments Shipment[]
+
+  @@unique([tenantId, reference])
+  @@map("orders")
+}
+
+model Shipment {
+  id            String         @id @default(cuid())
+  orderId       String
+  origin        String
+  originLat     Float?
+  originLng     Float?
+  destination   String
+  destLat       Float?
+  destLng       Float?
+  status        ShipmentStatus @default(PENDING)
+  plannedDate   DateTime?
+  routeId       String?
+  trackingToken String         @unique @default(cuid())
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  order         Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  route         Route?          @relation(fields: [routeId], references: [id])
+  stops         Stop[]
+  deliveryItems DeliveryItem[]
+  pod           POD?
+  documents     Document[]
+  events        ShipmentEvent[]
+  exceptions    Exception[]
+
+  @@map("shipments")
+}
+
+model Route {
+  id                String      @id @default(cuid())
+  tenantId          String
+  driverId          String?
+  vehicleId         String?
+  name              String?
+  plannedStart      DateTime?
+  status            RouteStatus @default(DRAFT)
+  distanceKm        Float?
+  estimatedDuration Int?        // minutes
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  driver    Driver?    @relation(fields: [driverId], references: [id])
+  vehicle   Vehicle?   @relation(fields: [vehicleId], references: [id])
+  stops     Stop[]
+  shipments Shipment[]
+
+  @@map("routes")
+}
+
+model Stop {
+  id              String     @id @default(cuid())
+  routeId         String
+  shipmentId      String
+  sequence        Int
+  location        String
+  lat             Float?
+  lng             Float?
+  timeWindowStart DateTime?
+  timeWindowEnd   DateTime?
+  status          StopStatus @default(PENDING)
+  arrivedAt       DateTime?
+  completedAt     DateTime?
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  route    Route    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  shipment Shipment @relation(fields: [shipmentId], references: [id])
+
+  @@map("stops")
+}
+
+model Driver {
+  id          String       @id @default(cuid())
+  tenantId    String
+  name        String
+  phone       String?
+  email       String?
+  licenseType String?
+  status      DriverStatus @default(AVAILABLE)
+  lastLat     Float?
+  lastLng     Float?
+  lastSeen    DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  routes Route[]
+
+  @@map("drivers")
+}
+
+model Vehicle {
+  id               String        @id @default(cuid())
+  tenantId         String
+  registration     String
+  type             String?
+  capacityWeight   Float?        // kg
+  capacityVolume   Float?        // m3
+  status           VehicleStatus @default(AVAILABLE)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  routes Route[]
+
+  @@unique([tenantId, registration])
+  @@map("vehicles")
+}
+
+model DeliveryItem {
+  id          String   @id @default(cuid())
+  shipmentId  String
+  description String
+  quantity    Int      @default(1)
+  weight      Float?
+  volume      Float?
+  createdAt   DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("delivery_items")
+}
+
+model POD {
+  id            String   @id @default(cuid())
+  shipmentId    String   @unique
+  signatureUrl  String?
+  photoUrl      String?
+  recipientName String?
+  deliveryTime  DateTime @default(now())
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("pods")
+}
+
+model Document {
+  id         String       @id @default(cuid())
+  shipmentId String
+  type       DocumentType @default(OTHER)
+  name       String
+  fileUrl    String
+  uploadedBy String?
+  createdAt  DateTime     @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+model ShipmentEvent {
+  id         String   @id @default(cuid())
+  shipmentId String
+  eventType  String
+  description String?
+  lat        Float?
+  lng        Float?
+  actor      String?
+  metadata   Json?
+  timestamp  DateTime @default(now())
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("shipment_events")
+}
+
+model Exception {
+  id          String          @id @default(cuid())
+  shipmentId  String
+  type        ExceptionType   @default(OTHER)
+  description String
+  status      ExceptionStatus @default(OPEN)
+  assignedTo  String?
+  createdAt   DateTime        @default(now())
+  resolvedAt  DateTime?
+  updatedAt   DateTime        @updatedAt
+
+  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@map("exceptions")
+}
+
+model Location {
+  id       String @id @default(cuid())
+  tenantId String
+  name     String
+  address  String
+  lat      Float?
+  lng      Float?
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+
+  @@map("locations")
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  tenantId    String
+  locationId  String
+  companyName String
+  contactName String?
+  contactEmail String?
+  startTime   DateTime
+  endTime     DateTime
+  status      AppointmentStatus @default(PENDING)
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@map("appointments")
+}
