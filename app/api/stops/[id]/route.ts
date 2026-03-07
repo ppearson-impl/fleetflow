@@ -14,10 +14,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       status: body.status,
       ...(body.status === 'ARRIVED' ? { arrivedAt: new Date() } : {}),
       ...(body.status === 'DELIVERED' || body.status === 'FAILED' ? { completedAt: new Date() } : {}),
+      ...(body.failureReason ? { failureReason: body.failureReason } : {}),
     },
   })
 
-  // Update shipment status too
+  // Cascade status to shipment
   const shipmentStatus =
     body.status === 'DELIVERED' ? 'DELIVERED' :
     body.status === 'FAILED' ? 'FAILED' :
@@ -29,11 +30,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data: { status: shipmentStatus },
     })
 
+    const description = body.failureReason
+      ? `Stop failed: ${body.failureReason.replace(/_/g, ' ').toLowerCase()}`
+      : `Stop ${body.status.toLowerCase()} by driver`
+
     await prisma.shipmentEvent.create({
       data: {
         shipmentId: stop.shipmentId,
         eventType: body.status,
-        description: `Stop ${body.status.toLowerCase()} by driver`,
+        description,
         actor: session.name,
       },
     })
