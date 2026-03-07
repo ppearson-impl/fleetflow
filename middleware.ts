@@ -1,15 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { jwtVerify } from 'jose'
 
 const PUBLIC_PATHS = ['/login', '/api/auth', '/track']
 
-// Inline verification — avoids importing lib/auth which pulls in Prisma (not Edge-compatible)
+// Pure Web Crypto JWT verification — zero external imports, fully Edge-compatible
 async function verifySession(token: string) {
   try {
-    const secret = new TextEncoder().encode(
+    const parts = token.split('.')
+    if (parts.length !== 3) return null
+
+    // Import the HMAC key using Web Crypto API (available in all Edge runtimes)
+    const rawSecret = new TextEncoder().encode(
       process.env.NEXTAUTH_SECRET || 'fleetflow-secret-key-minimum-32-chars!!'
     )
-    const { payload } = await jwtVerify(token, secret)
+    const key = await crypto.subtle.importKey(
+      'raw',
+      rawSecret,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['verify']
+    )
+
+    // Decode base64url signature
+    const sigB64 = parts[2].replace(/-/g, '+').replace(/_/g, '/')
+    const sigBytes = Uint8Array.from(atob(sigB64), (c) => c.charCodeAt(0))
+
+    // Verify signature over header.payload
+    const valid = await crypto.subtle.verify(
+      'HMAC',
+      key,
+      sigBytes,
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+    )
+    if (!valid) return null
+
+    // Decode payload
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
+
+    // Check expiry
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null
+
     return payload as { id: string; email: string; role: string; tenantId: string; tenantName: string }
   } catch {
     return null
