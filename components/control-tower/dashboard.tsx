@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { formatDateTime, statusColor } from '@/lib/utils'
+import { ExceptionCard } from './exception-card'
 
 interface KPIs {
   totalShipments: number
@@ -281,22 +282,21 @@ export function ControlTowerDashboard({ data }: { data: DashboardData }) {
             <p>No open exceptions</p>
           </div>
         ) : (
-          <div className="divide-y divide-gray-50">
+          <div className="space-y-2 p-3">
             {recentExceptions.map((ex) => (
-              <div key={ex.id} className="p-4 flex items-start gap-4">
-                <span
-                  className={`inline-flex px-2 py-0.5 rounded text-xs font-medium mt-0.5 ${statusColor(ex.status)}`}
-                >
-                  {ex.type.replace(/_/g, ' ')}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-gray-900 truncate">
-                    {ex.shipment.order.reference} — {ex.shipment.origin} → {ex.shipment.destination}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-0.5">{ex.description}</p>
-                </div>
-                <span className="text-xs text-gray-400 shrink-0">{formatDateTime(ex.createdAt)}</span>
-              </div>
+              <ExceptionCard
+                key={ex.id}
+                id={ex.id}
+                type={ex.type}
+                description={ex.description}
+                status={ex.status}
+                createdAt={ex.createdAt}
+                shipmentRef={ex.shipment.order.reference}
+                shipmentRoute={`${ex.shipment.origin} → ${ex.shipment.destination}`}
+                onStatusChange={() => {
+                  // Refresh exceptions list (could trigger a refetch here)
+                }}
+              />
             ))}
           </div>
         )}
