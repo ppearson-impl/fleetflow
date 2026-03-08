@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { Sidebar } from '@/components/sidebar'
+import { ToastProvider } from '@/lib/toast-context'
 
 export default async function DashboardLayout({
   children,
@@ -12,11 +13,13 @@ export default async function DashboardLayout({
   if (session.role === 'DRIVER') redirect('/driver')
 
   return (
-    <div className="flex h-screen bg-gray-50 overflow-hidden">
-      <Sidebar user={session} />
-      <main className="flex-1 overflow-auto">
-        {children}
-      </main>
-    </div>
+    <ToastProvider>
+      <div className="flex h-screen bg-gray-50 overflow-hidden">
+        <Sidebar user={session} />
+        <main className="flex-1 overflow-auto">
+          {children}
+        </main>
+      </div>
+    </ToastProvider>
   )
 }
