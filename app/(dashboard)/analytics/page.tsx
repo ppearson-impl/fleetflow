@@ -1,21 +1,18 @@
 import { getSession } from '@/lib/auth'
 import { AnalyticsDashboard } from './analytics-client'
 
-async function getReportsData(tenantId: string, startDate?: string, endDate?: string) {
+async function getReportsData(startDate?: string, endDate?: string) {
   const params = new URLSearchParams()
   if (startDate) params.append('startDate', startDate)
   if (endDate) params.append('endDate', endDate)
 
   const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
   const response = await fetch(`${baseUrl}/api/reports?${params.toString()}`, {
-    headers: {
-      'X-Tenant-Id': tenantId,
-    },
     cache: 'no-store',
   })
 
   if (!response.ok) {
-    throw new Error('Failed to fetch reports data')
+    throw new Error(`Failed to fetch reports data: ${response.status}`)
   }
 
   return response.json()
@@ -26,7 +23,7 @@ export default async function AnalyticsPage() {
   if (!session) return null
 
   try {
-    const data = await getReportsData(session.tenantId)
+    const data = await getReportsData()
     return <AnalyticsDashboard data={data} />
   } catch (error) {
     console.error('Analytics page error:', error)
