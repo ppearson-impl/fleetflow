@@ -3,14 +3,9 @@ import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import ShipmentDetailClient from './shipment-detail-client'
 
-export default async function ShipmentDetailPage({ params }: { params: { id: string } }) {
-  // Get session
-  const session = await getSession()
-  if (!session) return notFound()
-
-  // Fetch shipment with all related data
+async function getShipmentDetail(shipmentId: string, tenantId: string) {
   const shipment = await prisma.shipment.findUnique({
-    where: { id: params.id },
+    where: { id: shipmentId },
     include: {
       order: {
         include: {
@@ -21,49 +16,47 @@ export default async function ShipmentDetailPage({ params }: { params: { id: str
         include: {
           driver: true,
           vehicle: true,
+          stops: {
+            include: {
+              shipment: {
+                include: {
+                  order: {
+                    include: {
+                      customer: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
-      stops: true,
       deliveryItems: true,
       pod: true,
       documents: true,
+      stops: {
+        orderBy: { sequence: 'asc' },
+      },
       events: {
-        orderBy: { timestamp: 'desc' },
+        orderBy: { timestamp: 'asc' },
       },
       exceptions: true,
     },
   })
 
-  if (!shipment) return notFound()
-
-  // Check tenant access
-  if (shipment.order.tenantId !== session.tenantId) return notFound()
-
-  // Convert Prisma objects to plain objects for client component
-  const shipmentData = {
-    ...shipment,
-    plannedDate: shipment.plannedDate ? new Date(shipment.plannedDate) : null,
-    events: shipment.events.map((e) => ({
-      ...e,
-      timestamp: new Date(e.timestamp),
-    })),
-    pod: shipment.pod
-      ? {
-          ...shipment.pod,
-          deliveryTime: new Date(shipment.pod.deliveryTime),
-        }
-      : null,
-    exceptions: shipment.exceptions.map((e) => ({
-      ...e,
-      createdAt: new Date(e.createdAt),
-      resolvedAt: e.resolvedAt ? new Date(e.resolvedAt) : null,
-    })),
-    stops: shipment.stops.map((s) => ({
-      ...s,
-      timeWindowStart: s.timeWindowStart ? new Date(s.timeWindowStart) : null,
-      timeWindowEnd: s.timeWindowEnd ? new Date(s.timeWindowEnd) : null,
-    })),
+  // Check tenant access through order
+  if (!shipment || shipment.order.tenantId !== tenantId) {
+    notFound()
   }
 
-  return <ShipmentDetailClient shipment={shipmentData} />
+  return shipment
+}
+
+export default async function ShipmentDetailPage({ params }: { params: { id: string } }) {
+  const session = await getSession()
+  if (!session) return null
+
+  const shipment = await getShipmentDetail(params.id, session.tenantId)
+
+  return <ShipmentDetailClient shipment={shipment} />
 }

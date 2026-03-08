@@ -6,6 +6,7 @@ import dynamic from 'next/dynamic'
 import { DndContext, DragEndEvent } from '@dnd-kit/core'
 import { DraggableShipmentItem } from '@/components/planning-board/draggable-shipment-item'
 import { DroppableRouteCard } from '@/components/planning-board/droppable-route-card'
+import { OptimizeModal } from '@/components/planning-board/optimize-modal'
 import { assignShipmentToRoute, reassignShipment, unassignShipment } from '@/lib/planner/route-assignment'
 
 const PlanningMap = dynamic(() => import('@/components/map/planning-map'), { ssr: false })
@@ -58,6 +59,8 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
   const [selectedRoute, setSelectedRoute] = useState<Route | null>(data.routes[0] || null)
   const [creating, setCreating] = useState(false)
   const [optimizing, setOptimizing] = useState(false)
+  const [showOptimizeModal, setShowOptimizeModal] = useState(false)
+  const [optimizationResult, setOptimizationResult] = useState<{ distance: number } | null>(null)
 
   async function createRoute() {
     setCreating(true)
@@ -114,19 +117,36 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
   async function optimize() {
     if (!selectedRoute) return
     setOptimizing(true)
-    await fetch('/api/routes/optimize', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ routeId: selectedRoute.id }),
-    })
-    // Reload
+    try {
+      const res = await fetch('/api/routes/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ routeId: selectedRoute.id }),
+      })
+
+      if (res.ok) {
+        const result = await res.json()
+        setOptimizationResult({ distance: result.optimizedDistance || selectedRoute.distanceKm || 0 })
+        setShowOptimizeModal(true)
+      }
+    } catch (error) {
+      console.error('Failed to optimize:', error)
+    } finally {
+      setOptimizing(false)
+    }
+  }
+
+  async function applyOptimization() {
+    if (!selectedRoute) return
+    // Reload the updated route
     const res = await fetch(`/api/routes/${selectedRoute.id}`)
     if (res.ok) {
       const updated = await res.json()
       setRoutes((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
       setSelectedRoute(updated)
     }
-    setOptimizing(false)
+    setShowOptimizeModal(false)
+    setOptimizationResult(null)
   }
 
   async function assignDriver(driverId: string) {
@@ -322,6 +342,21 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
         )}
       </div>
       </div>
+      {/* Optimization Modal */}
+      {showOptimizeModal && selectedRoute && (
+        <OptimizeModal
+          routeId={selectedRoute.id}
+          routeName={selectedRoute.name || 'Route'}
+          currentDistance={selectedRoute.distanceKm || 0}
+          currentStops={selectedRoute.stops.length}
+          optimizedDistance={optimizationResult?.distance}
+          onApply={applyOptimization}
+          onClose={() => {
+            setShowOptimizeModal(false)
+            setOptimizationResult(null)
+          }}
+        />
+      )}
     </DndContext>
   )
 }
