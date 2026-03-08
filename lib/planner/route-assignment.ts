@@ -100,7 +100,7 @@ export async function getUnplannedShipments(tenantId: string) {
     where: {
       order: { tenantId },
       routeId: null,
-      status: { in: ['PENDING', 'CONFIRMED'] },
+      status: { in: ['PENDING', 'PLANNED'] },
     },
     include: {
       order: { include: { customer: true } },
