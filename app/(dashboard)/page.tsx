@@ -6,12 +6,14 @@ async function getDashboardData(tenantId: string) {
   const [
     totalShipments,
     deliveredToday,
-    lateShipments,
-    activeRoutes,
-    openExceptions,
+    lateShipmentsCount,
+    activeRoutesCount,
+    openExceptionsCount,
     recentExceptions,
     shipmentsByDay,
     activeDrivers,
+    lateShipments,
+    activeRoutes,
   ] = await Promise.all([
     prisma.shipment.count({
       where: { order: { tenantId }, status: { not: 'CANCELLED' } },
@@ -54,22 +56,48 @@ async function getDashboardData(tenantId: string) {
       ORDER BY date
     ` as Promise<{ date: Date; count: number }[]>,
     prisma.driver.count({ where: { tenantId, status: { in: ['AVAILABLE', 'ON_ROUTE'] } } }),
+    // Detailed late shipments for drill-down
+    prisma.shipment.findMany({
+      where: {
+        order: { tenantId },
+        status: { in: ['DISPATCHED', 'IN_TRANSIT'] },
+        plannedDate: { lt: new Date() },
+      },
+      include: {
+        order: { include: { customer: true } },
+        route: { include: { driver: true } },
+      },
+      take: 50,
+    }),
+    // Detailed active routes for drill-down
+    prisma.route.findMany({
+      where: { tenantId, status: { in: ['DISPATCHED', 'IN_PROGRESS'] } },
+      include: {
+        driver: true,
+        vehicle: true,
+        stops: { where: { status: { not: 'DELIVERED' } } },
+      },
+    }),
   ])
 
   const onTimeRate =
     totalShipments > 0
-      ? Math.round(((totalShipments - lateShipments) / totalShipments) * 100)
+      ? Math.round(((totalShipments - lateShipmentsCount) / totalShipments) * 100)
       : 100
 
   return {
     kpis: {
       totalShipments,
       deliveredToday,
-      lateShipments,
-      activeRoutes,
-      openExceptions,
+      lateShipments: lateShipmentsCount,
+      activeRoutes: activeRoutesCount,
+      openExceptions: openExceptionsCount,
       onTimeRate,
       activeDrivers,
+    },
+    drillDownData: {
+      lateShipments,
+      activeRoutes,
     },
     recentExceptions,
     shipmentsByDay,
