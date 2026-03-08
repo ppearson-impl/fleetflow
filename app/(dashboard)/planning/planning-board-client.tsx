@@ -3,6 +3,10 @@
 import { useState } from 'react'
 import { formatDate, statusColor } from '@/lib/utils'
 import dynamic from 'next/dynamic'
+import { DndContext, DragEndEvent } from '@dnd-kit/core'
+import { DraggableShipmentItem } from '@/components/planning-board/draggable-shipment-item'
+import { DroppableRouteCard } from '@/components/planning-board/droppable-route-card'
+import { assignShipmentToRoute, reassignShipment, unassignShipment } from '@/lib/planner/route-assignment'
 
 const PlanningMap = dynamic(() => import('@/components/map/planning-map'), { ssr: false })
 
@@ -137,33 +141,97 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
     setSelectedRoute((prev) => prev ? { ...prev, driver } : prev)
   }
 
+  async function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event
+
+    if (!over) return
+
+    // Extract IDs from drag IDs (format: "shipment-{id}" or "route-{id}" or "stop-{routeId}-{id}")
+    const activeData = active.data.current
+    const overData = over.data.current
+
+    if (!activeData || !overData) return
+
+    // Handle shipment → route assignment
+    if (activeData.type === 'shipment' && overData.type === 'route') {
+      const shipmentId = activeData.shipmentId
+      const routeId = overData.routeId
+
+      try {
+        // API call to assign shipment
+        const res = await fetch(`/api/routes/${routeId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ shipmentIds: [shipmentId] }),
+        })
+
+        if (res.ok) {
+          // Update local state
+          const shipment = unplanned.find((s) => s.id === shipmentId)
+          if (shipment) {
+            setUnplanned((prev) => prev.filter((s) => s.id !== shipmentId))
+            setRoutes((prev) =>
+              prev.map((r) =>
+                r.id === routeId
+                  ? {
+                      ...r,
+                      stops: [
+                        ...r.stops,
+                        {
+                          id: `tmp-${Date.now()}`,
+                          sequence: r.stops.length + 1,
+                          location: shipment.destination,
+                          status: 'PENDING',
+                          lat: shipment.destLat,
+                          lng: shipment.destLng,
+                          shipment,
+                        },
+                      ],
+                    }
+                  : r
+              )
+            )
+          }
+        }
+      } catch (error) {
+        console.error('Failed to assign shipment:', error)
+      }
+    }
+
+    // Handle shipment → different route (reassignment)
+    if (activeData.type === 'shipment' && overData.type === 'route') {
+      // Same logic as above for now
+      // In future, can add swap/reassignment logic
+    }
+  }
+
   return (
-    <div className="flex h-full" style={{ height: 'calc(100vh - 0px)' }}>
-      {/* Left panel: unplanned shipments */}
-      <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
-        <div className="p-4 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900">Unplanned</h2>
-          <p className="text-xs text-gray-500">{unplanned.length} shipments</p>
+    <DndContext onDragEnd={handleDragEnd}>
+      <div className="flex h-full" style={{ height: 'calc(100vh - 0px)' }}>
+        {/* Left panel: unplanned shipments */}
+        <div className="w-72 bg-white border-r border-gray-200 flex flex-col">
+          <div className="p-4 border-b border-gray-100">
+            <h2 className="font-semibold text-gray-900">Unplanned</h2>
+            <p className="text-xs text-gray-500">{unplanned.length} shipments</p>
+            <p className="text-xs text-gray-400 mt-1">Drag to routes →</p>
+          </div>
+          <div className="flex-1 overflow-y-auto p-2 space-y-2">
+            {unplanned.map((s) => (
+              <DraggableShipmentItem
+                key={s.id}
+                id={s.id}
+                reference={s.order.reference}
+                customer={s.order.customer.name}
+                origin={s.origin}
+                destination={s.destination}
+                status={s.status}
+              />
+            ))}
+            {unplanned.length === 0 && (
+              <div className="text-center text-gray-400 text-sm py-8">All shipments planned</div>
+            )}
+          </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-2">
-          {unplanned.map((s) => (
-            <div
-              key={s.id}
-              className="p-3 bg-gray-50 rounded-lg border border-gray-200 cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition"
-              onClick={() => addShipmentToRoute(s.id)}
-              title="Click to add to selected route"
-            >
-              <div className="font-mono text-xs text-blue-600 mb-1">{s.order.reference}</div>
-              <div className="text-sm font-medium text-gray-900 truncate">{s.order.customer.name}</div>
-              <div className="text-xs text-gray-500 truncate mt-0.5">→ {s.destination}</div>
-              {s.plannedDate && <div className="text-xs text-gray-400 mt-1">{formatDate(s.plannedDate)}</div>}
-            </div>
-          ))}
-          {unplanned.length === 0 && (
-            <div className="text-center text-gray-400 text-sm py-8">All shipments planned</div>
-          )}
-        </div>
-      </div>
 
       {/* Middle: map */}
       <div className="flex-1 relative">
@@ -174,7 +242,7 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
       </div>
 
       {/* Right panel: routes */}
-      <div className="w-80 bg-white border-l border-gray-200 flex flex-col">
+      <div className="w-96 bg-white border-l border-gray-200 flex flex-col">
         <div className="p-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-gray-900">Routes</h2>
@@ -190,47 +258,45 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
         </div>
 
         {/* Route list */}
-        <div className="flex-1 overflow-y-auto">
-          {routes.map((route) => (
-            <div
-              key={route.id}
-              onClick={() => setSelectedRoute(route)}
-              className={`p-4 border-b border-gray-100 cursor-pointer transition ${
-                selectedRoute?.id === route.id ? 'bg-blue-50 border-l-2 border-l-blue-500' : 'hover:bg-gray-50'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-medium text-sm text-gray-900 truncate">{route.name || 'Unnamed Route'}</span>
-                <span className={`text-xs px-1.5 py-0.5 rounded ${statusColor(route.status)}`}>{route.status}</span>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {routes.map((route) => {
+            const routeShipments = route.stops.map((s) => s.shipment).filter((s) => s).map((s) => ({
+              id: s.id,
+              reference: s.order.reference,
+              origin: s.origin,
+              destination: s.destination,
+              status: s.status,
+            }))
+            return (
+              <div
+                key={route.id}
+                onClick={() => setSelectedRoute(route)}
+                className={`cursor-pointer transition ${
+                  selectedRoute?.id === route.id ? 'ring-2 ring-blue-500' : ''
+                }`}
+              >
+                <DroppableRouteCard
+                  id={route.id}
+                  name={route.name || 'Unnamed Route'}
+                  status={route.status}
+                  driver={route.driver}
+                  vehicle={route.vehicle}
+                  distanceKm={route.distanceKm}
+                  stops={route.stops}
+                  shipments={routeShipments}
+                  onOptimize={() => optimize()}
+                />
               </div>
-              <div className="text-xs text-gray-500 space-y-0.5">
-                <div>{route.stops.length} stops</div>
-                {route.driver && <div>Driver: {route.driver.name}</div>}
-                {route.distanceKm && <div>{route.distanceKm} km</div>}
-              </div>
-            </div>
-          ))}
+            )
+          })}
+          {routes.length === 0 && (
+            <div className="text-center text-gray-400 text-sm py-8">No routes created. Click "+ New" to create one.</div>
+          )}
         </div>
 
         {/* Selected route detail */}
         {selectedRoute && (
           <div className="border-t border-gray-200 p-4 space-y-3">
-            <div className="flex gap-2">
-              <button
-                onClick={optimize}
-                disabled={optimizing || selectedRoute.stops.length < 2}
-                className="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg text-xs font-medium hover:bg-indigo-700 disabled:opacity-40"
-              >
-                {optimizing ? 'Optimising...' : 'Optimise Route'}
-              </button>
-              <a
-                href={`/dispatch?routeId=${selectedRoute.id}`}
-                className="flex-1 px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 text-center"
-              >
-                Dispatch
-              </a>
-            </div>
-
             {/* Driver assign */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Assign Driver</label>
@@ -246,23 +312,16 @@ export function PlanningBoardClient({ data }: { data: PlanningData }) {
               </select>
             </div>
 
-            {/* Stop list */}
-            <div className="space-y-1 max-h-40 overflow-y-auto">
-              {selectedRoute.stops.map((stop, i) => (
-                <div key={stop.id} className="flex items-start gap-2 text-xs">
-                  <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 font-bold">
-                    {i + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <div className="font-medium text-gray-900 truncate">{stop.shipment.order.customer.name}</div>
-                    <div className="text-gray-500 truncate">{stop.location}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <a
+              href={`/dispatch?routeId=${selectedRoute.id}`}
+              className="w-full block px-3 py-2 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 text-center"
+            >
+              Dispatch This Route
+            </a>
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </DndContext>
   )
 }
